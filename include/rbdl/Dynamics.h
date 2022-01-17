@@ -135,6 +135,26 @@ RBDL_DLLAPI void ForwardDynamics (
  * \param H     preallocated workspace area for the joint space inertia matrix of size dof_count x dof_count (optional, defaults to NULL and allocates temporary matrix)
  * \param C     preallocated workspace area for the right hand side vector of size dof_count x 1 (optional, defaults to NULL and allocates temporary vector)
  */
+
+RBDL_DLLAPI void AnalyticalInverseInertiaMatrix (
+    Model &model,
+    const Math::VectorNd &Q,
+    const Math::VectorNd &QDot,
+    Math::VectorNd &Minv);
+
+/** \brief Computes Analytical Inverse of the Joint Space Inertia Matrix
+ *
+ * This method Computes Analytical Inverse of the Joint Space Inertia Matrix
+ * adapted from the CompositeRigidBodyAlgorithm(), the method relies on
+ * Justin Carpentier. Analytical Inverse of the Joint Space Inertia Matrix. Rapport LAAS n° 18125. 2018. ffhal-01790934v2f
+ * https://hal.laas.fr/hal-01790934v2/document
+ *
+ * \param model rigid body model
+ * \param Q     state vector of the internal joints
+ * \param QDot  velocity vector of the internal joints
+ * \param Minv  inverse of the joint space inertia matrix (output)
+ */
+
 RBDL_DLLAPI void ForwardDynamicsLagrangian (
     Model &model,
     const Math::VectorNd &Q,

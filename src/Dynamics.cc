@@ -563,9 +563,7 @@ RBDL_DLLAPI void AnalyticalInverseInertiaMatrix(
     Model &model,
     const VectorNd &Q,
     const VectorNd &QDot,
-    const VectorNd &Tau,
-    MatrixNd &Minv,
-    std::vector<SpatialVector> *f_ext) {
+    MatrixNd &Minv) {
   LOG << "-------- " << __func__ << " --------" << std::endl;
 
   unsigned int i = 0;
