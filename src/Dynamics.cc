@@ -568,8 +568,6 @@ RBDL_DLLAPI void AnalyticalInverseInertiaMatrix(
     std::vector<SpatialVector> *f_ext) {
   LOG << "-------- " << __func__ << " --------" << std::endl;
 
-  SpatialVector spatial_gravity (0., 0., 0., model.gravity[0], model.gravity[1], model.gravity[2]);
-
   unsigned int i = 0;
 
   LOG << "Q          = " << Q.transpose() << std::endl;
@@ -579,7 +577,7 @@ RBDL_DLLAPI void AnalyticalInverseInertiaMatrix(
 
   // Reset the velocity of the root body
   model.v[0].setZero();
-
+  // First Forward Pass
   for (i = 1; i < model.mBodies.size(); i++) {
     unsigned int lambda = model.lambda[i];
 
@@ -590,8 +588,6 @@ RBDL_DLLAPI void AnalyticalInverseInertiaMatrix(
     else
       model.X_base[i] = model.X_lambda[i];
 
-    //model.v[i] = model.X_lambda[i].apply( model.v[lambda]) + model.v_J[i];
-
     /*
        LOG << "X_J (" << i << "):" << std::endl << X_J << std::endl;
        LOG << "v_J (" << i << "):" << std::endl << v_J << std::endl;
@@ -600,65 +596,63 @@ RBDL_DLLAPI void AnalyticalInverseInertiaMatrix(
        LOG << "X_lambda (" << i << "):" << std::endl << model.X_lambda[i] << std::endl;
        LOG << "SpatialVelocity (" << i << "): " << model.v[i] << std::endl;
        */
-    //model.c[i] = model.c_J[i] + crossm(model.v[i],model.v_J[i]);
+
     model.I[i].setSpatialMatrix (model.IA[i]);
-
-    //model.pA[i] = crossf(model.v[i],model.I[i] * model.v[i]);
-
-//#ifdef RBDL_USE_CASADI_MATH
-//    if (f_ext != NULL) {
-//#else
-//    if (f_ext != NULL && (*f_ext)[i] != SpatialVector::Zero()) {
-//#endif
-//      LOG << "External force (" << i << ") = " << model.X_base[i].toMatrixAdjoint() * (*f_ext)[i] << std::endl;
-//      model.pA[i] -= model.X_base[i].toMatrixAdjoint() * (*f_ext)[i];
-//    }
-  }
-
+    }
   // ClearLogOutput();
-
   LOG << "--- first loop ---" << std::endl;
 
+  // initialize a F matrix (model.mBodies.size() x 6 x model.mBodies.size())
+  // with zeros
+  const MatrixNd F; // TOMODIF
+  F.setZero(); // all element to zero
+  //
+  // Backward Pass
   for (i = model.mBodies.size() - 1; i > 0; i--) {
     unsigned int q_index = model.mJoints[i].q_index;
+
+    // TODO
+    std::vector<unsigned int> sub_index = TODO; // TODO
+    // TODO
 
     if (model.mJoints[i].mDoFCount == 1
         && model.mJoints[i].mJointType != JointTypeCustom) {
 
       model.U[i] = model.IA[i] * model.S[i];
       model.d[i] = model.S[i].dot(model.U[i]);
-      Minv[i,i] = 1/model.d[i]
-      Minv[i,subtree(i)] = model.Minv[i,subtree(i)]
-              - model.d[i].transpose() * model.S[i].transpose() * model.F[:,subtree(i)];
-//      model.u[i] = Tau[q_index] - model.S[i].dot(model.pA[i]);
-      //      LOG << "u[" << i << "] = " << model.u[i] << std::endl;
+
+      // from me
+      Minv.block(i, i, 1, 1) = 1/model.d[i];
+      for (j = 0; j < sub_index.size(); j++) {
+            Minv.block(i,sub_index[j], 1, 1) = Minv.block(i,sub_index[j], 1, 1)
+                    - 1/model.d[i] * model.S[i].transpose() * F.block(i, 0, sub_index[j],1 ,6, 1); // F to modif
+      }
 
       unsigned int lambda = model.lambda[i];
       if (lambda != 0) {
+         // from me // need to be converted in casadi ?
+        for (j = 0; j < sub_index.size(); j++) {
+                F.block(i, 0, sub_index[j], 1, 6, 1) = F.block(i, 0, sub_index[j], 1, 6, 1)
+                        + model.U[i]* Minv.block(i,sub_index[j], 1, 1);
+                F.block(lambda, 0, sub_index[j], 1, 6, 1) = F.block(lambda, 0, sub_index[j], 1, 6, 1)
+                        + model.X_lambda[i].toMatrixTranspose() * F.block(i, 0, sub_index[j], 1, 6, 1);
+        }
+
         SpatialMatrix Ia =    model.IA[i]
           - model.U[i]
           * (model.U[i] / model.d[i]).transpose();
-
-//        SpatialVector pa =  model.pA[i]
-//          + Ia * model.c[i]
-//          + model.U[i] * model.u[i] / model.d[i];
 
 #ifdef RBDL_USE_CASADI_MATH
         model.IA[lambda]
           += model.X_lambda[i].toMatrixTranspose()
           * Ia * model.X_lambda[i].toMatrix();
 
-//        model.pA[lambda] += model.X_lambda[i].applyTranspose(pa);
 #else
         model.IA[lambda].noalias()
           += model.X_lambda[i].toMatrixTranspose()
           * Ia * model.X_lambda[i].toMatrix();
-//        model.pA[lambda].noalias()
-//          += model.X_lambda[i].applyTranspose(pa);
 #endif
 
-//        LOG << "pA[" << lambda << "] = "
-//          << model.pA[lambda].transpose() << std::endl;
       }
     } else if (model.mJoints[i].mDoFCount == 3
         && model.mJoints[i].mJointType != JointTypeCustom) {
@@ -671,47 +665,51 @@ RBDL_DLLAPI void AnalyticalInverseInertiaMatrix(
       model.multdof3_Dinv[i] = (model.multdof3_S[i].transpose()
           * model.multdof3_U[i]).inverse().eval();
 #endif
-//      Vector3d tau_temp(Tau.block(q_index,0,3,1));
-//      model.multdof3_u[i] = tau_temp
-//        - model.multdof3_S[i].transpose() * model.pA[i];
-      Minv[i,i] = model.multdof3_Dinv[i]
-      Minv[i,subtree(i)] = model.Minv[i,subtree(i)]
-              - (model.multdof3_S[i].transpose()
-              * model.multdof3_U[i]) * model.S[i].transpose() * model.F[:,subtree(i)];
-      // LOG << "multdof3_u[" << i << "] = "
-      //                      << model.multdof3_u[i].transpose() << std::endl;
+      // from me
+      Minv.block(i, i, 3, 3) = model.multdof3_Dinv[i];
+      for (j = 0; j < sub_index.size(); j++) {
+            Minv.block(i, sub_index[j], 3, 3) = Minv.block(i, sub_index[j], 3, 3)
+                    - model.multdof3_Dinv[i].transpose() * model.S[i].transpose() * F.block(i, 0, sub_index[j], 3, 6, 1); // F to modif
+            // what is the size of S and F ? first guess S is (6 x 3) and F too
+            // and so S^T * F is 3 x 1
+            // I dont know how to write it for F..
+      }
+
       unsigned int lambda = model.lambda[i];
       if (lambda != 0) {
+          // from me // need to be converted in casadi ?
+          // complicated because i don't know the size of F in case of this joint type.
+          // Ui is supposed to be  6 x 3
+          // Fi 6 x 3
+          // What about Fparent 6 x (3 or 1) ??
+         for (j = 0; j < sub_index.size(); j++) {
+                 F.block(i, 0, sub_index[j], 3, 6, 1) = F.block(i, 0, sub_index[j], 3, 6, 1)
+                         + model.U[i].transpose() * Minv.block(i, sub_index[j], 3, 1);
+
+                 F.block(lambda, 0, sub_index[j], 3, 6, 1) = F.block(lambda, 0, sub_index[j], 3, 6, 1)
+                         + model.X_lambda[i].toMatrixTranspose() * F.block(i, 0, sub_index[j], 3, 6, 1);
+
+         }
+
         SpatialMatrix Ia = model.IA[i]
           - model.multdof3_U[i]
           * model.multdof3_Dinv[i]
           * model.multdof3_U[i].transpose();
-//        SpatialVector pa = model.pA[i]
-//          + Ia
-//          * model.c[i]
-//          + model.multdof3_U[i]
-//          * model.multdof3_Dinv[i]
-//          * model.multdof3_u[i];
+
 #ifdef RBDL_USE_CASADI_MATH
         model.IA[lambda]
           += model.X_lambda[i].toMatrixTranspose()
           * Ia
           * model.X_lambda[i].toMatrix();
 
-//        model.pA[lambda] += model.X_lambda[i].applyTranspose(pa);
 #else
         model.IA[lambda].noalias()
           += model.X_lambda[i].toMatrixTranspose()
           * Ia
           * model.X_lambda[i].toMatrix();
-
-//        model.pA[lambda].noalias()
-//          += model.X_lambda[i].applyTranspose(pa);
 #endif
-//        LOG << "pA[" << lambda << "] = "
-//          << model.pA[lambda].transpose()
-//          << std::endl;
       }
+
     } else if (model.mJoints[i].mJointType == JointTypeCustom) {
       unsigned int kI   = model.mJoints[i].custom_joint_index;
       unsigned int dofI = model.mCustomJoints[kI]->mDoFCount;
@@ -727,50 +725,53 @@ RBDL_DLLAPI void AnalyticalInverseInertiaMatrix(
         = (model.mCustomJoints[kI]->S.transpose()
             * model.mCustomJoints[kI]->U).inverse().eval();
 #endif
-//      VectorNd tau_temp(Tau.block(q_index,0,dofI,1));
-//      model.mCustomJoints[kI]->u = tau_temp
-//        - model.mCustomJoints[kI]->S.transpose() * model.pA[i];
 
-      //      LOG << "multdof3_u[" << i << "] = "
-      //      << model.multdof3_u[i].transpose() << std::endl;
-      Minv[i,i] = model.mCustomJoints[kI]->Dinv
-      Minv[i,subtree(i)] = model.Minv[i,subtree(i)]
-              - (model.mCustomJoints[kI]->S.transpose()
-              * model.mCustomJoints[kI]->U).transpose() * model.S[i].transpose() * model.F[:,subtree(i)];
+      // from me
+      Minv.block(i, i, dofI, dofI) = model.mCustomJoints[kI]->Dinv;
+      for (j = 0; j < sub_index.size(); j++) {
+            Minv.block(i, sub_index[j], dofI, dofI) = Minv.block(i, sub_index[j], dofI, dofI)
+                    - model.mCustomJoints[kI]->Dinv.transpose() * model.mCustomJoints[kI]->S.transpose() * F.block(i, 0, sub_index[j], dofI, 6, 1); // F to modif
+            // what is the size of S and F ? first guess S is (6 x 3) and F too
+            // and so S^T * F is dofI x 1
+            // I dont know how to write it for F..
+      }
+
       unsigned int lambda = model.lambda[i];
       if (lambda != 0) {
+          // from me
+          // need to be converted in CasAdi ?
+          // complicated because i don't know the size of F in case of this joint type.
+          // Ui is supposed to be  6 x dofI
+          // Fi 6 x dofI
+          // What about Fparent 6 x (3 or 1) ??
+         for (j = 0; j < sub_index.size(); j++) {
+                 F.block(i, 0, sub_index[j], dofI, 6, 1) = F.block(i, 0, sub_index[j], dofI, 6, 1)
+                         + model.mCustomJoints[kI]->U.transpose() * Minv.block(i, sub_index[j], dofI, 1);
+
+                 F.block(lambda, 0, sub_index[j], dofI, 6, 1) = F.block(lambda, 0, sub_index[j], dofI, 6, 1)
+                         + model.X_lambda[i].toMatrixTranspose() * F.block(i, 0, sub_index[j], dofI, 6, 1);
+
+         }
+
         SpatialMatrix Ia = model.IA[i]
           - (model.mCustomJoints[kI]->U
               * model.mCustomJoints[kI]->Dinv
               * model.mCustomJoints[kI]->U.transpose());
-//        SpatialVector pa =  model.pA[i]
-//          + Ia * model.c[i]
-//          + (model.mCustomJoints[kI]->U
-//              * model.mCustomJoints[kI]->Dinv
-//              * model.mCustomJoints[kI]->u);
 
 #ifdef RBDL_USE_CASADI_MATH
         model.IA[lambda] += model.X_lambda[i].toMatrixTranspose()
           * Ia
           * model.X_lambda[i].toMatrix();
-//        model.pA[lambda] += model.X_lambda[i].applyTranspose(pa);
 #else
         model.IA[lambda].noalias() += model.X_lambda[i].toMatrixTranspose()
           * Ia
           * model.X_lambda[i].toMatrix();
-//        model.pA[lambda].noalias() += model.X_lambda[i].applyTranspose(pa);
 #endif
-//        LOG << "pA[" << lambda << "] = "
-//          << model.pA[lambda].transpose()
-//          << std::endl;
       }
     }
   }
 
-  //  ClearLogOutput();
-
-  model.a[0] = spatial_gravity * -1.;
-
+  // Second Forward Pass
   for (i = 1; i < model.mBodies.size(); i++) {
     unsigned int q_index = model.mJoints[i].q_index;
     unsigned int lambda = model.lambda[i];
@@ -782,58 +783,57 @@ RBDL_DLLAPI void AnalyticalInverseInertiaMatrix(
     if (model.mJoints[i].mDoFCount == 1
         && model.mJoints[i].mJointType != JointTypeCustom) {
 
-      if (lambda != 0){
-          Minv[i,i:] =  Minv[i,i:] - (1./model.d[i]) * model.U[i].transpose() * X_lambda * P_lambda[i,i:]
+      if (lambda != 0){ //  model.mBodies.size() - i is equivalent to until the end.
+          Minv.block(i, i, 1, model.mBodies.size() - i) =  Minv.block(i, i, 1, model.mBodies.size() - i)
+                  - (1./model.d[i]) * model.U[i].transpose() * X_lambda * F.block(lambda, 0, i, 1, 6, model.mBodies.size() - i);
       }
-      P_i[i,i:] = model.S[i] * Minv[i,i:]
+
+      F.block(i, 0, i, 1, 6, model.mBodies.size() - i) =
+              model.S[i] * Minv.block(i, i, 1, model.mBodies.size() - i); // outer product
+
       if (lambda != 0){
-          P_i[i,i:] =  P_i[i,i:] + X_lambda * P_lambda[i,i:]
+          F.block(i, 0, i, 1, 6, model.mBodies.size() - i) =  F.block(i, 0, i, 1, 6, model.mBodies.size() - i)
+                  + X_lambda * F.block(lambda, 0, i, 1, 6, model.mBodies.size() - i);
       }
 
     } else if (model.mJoints[i].mDoFCount == 3
         && model.mJoints[i].mJointType != JointTypeCustom) {
-      Vector3d qdd_temp = model.multdof3_Dinv[i] * (model.multdof3_u[i] - model.multdof3_U[i].transpose() * model.a[i]);
-      QDDot[q_index] = qdd_temp[0];
-      QDDot[q_index + 1] = qdd_temp[1];
-      QDDot[q_index + 2] = qdd_temp[2];
-      model.a[i] = model.a[i] + model.multdof3_S[i] * qdd_temp;
 
-      if (lambda != 0){
-          Minv[i,i:] =  Minv[i,i:] - model.multdof3_Dinv[i] * model.multdof3_U[i].transpose() * X_lambda * P_lambda[i,i:]
-      }
-      P_i[i,i:] =  model.multdof3_S[i] * Minv[i,i:]
-      if (lambda != 0){
-          P_i[i,i:] =  P_i[i,i:] + X_lambda * P_lambda[i,i:]
-      }
+        if (lambda != 0){ //  model.mBodies.size() - i is equivalent to until the end.
+            Minv.block(i, i, 3, model.mBodies.size() - i) =  Minv.block(i, i, 3, model.mBodies.size() - i)
+                    - model.multdof3_Dinv[i] * model.multdof3_U[i].transpose() * X_lambda * F.block(lambda, 0, i, 3, 6, model.mBodies.size() - i); // 3 on the size of the F ? or 1 ?
+        }
+
+        F.block(i, 0, i, 3, 6, model.mBodies.size() - i) =
+                model.S[i] * Minv.block(i, i, 3, model.mBodies.size() - i); // outer product
+
+        if (lambda != 0){
+            F.block(i, 0, i, 3, 6, model.mBodies.size() - i) =  F.block(i, 0, i, 3, 6, model.mBodies.size() - i)
+                    + X_lambda * F.block(lambda, 0, i, 3, 6, model.mBodies.size() - i);
+        }
 
     } else if (model.mJoints[i].mJointType == JointTypeCustom) {
       unsigned int kI = model.mJoints[i].custom_joint_index;
       unsigned int dofI=model.mCustomJoints[kI]->mDoFCount;
 
-      VectorNd qdd_temp = model.mCustomJoints[kI]->Dinv
-        * (  model.mCustomJoints[kI]->u
-            - model.mCustomJoints[kI]->U.transpose()
-            * model.a[i]);
-
-      for(int z=0; z<dofI; ++z){
-        QDDot[q_index+z] = qdd_temp[z];
+      if (lambda != 0){ //  model.mBodies.size() - i is equivalent to until the end.
+          Minv.block(i, i, dofI, model.mBodies.size() - i) =  Minv.block(i, i, dofI, model.mBodies.size() - i)
+                  - model.multdof3_Dinv[i] * model.multdof3_U[i].transpose() * X_lambda * F.block(lambda, 0, i, dofI, 6, model.mBodies.size() - i); // 3 on the size of the F ? or 1 ?
       }
 
-      model.a[i] = model.a[i]
-        + model.mCustomJoints[kI]->S * qdd_temp;
+      F.block(i, 0, i, dofI, 6, model.mBodies.size() - i) =
+              model.S[i] * Minv.block(i, i, dofI, model.mBodies.size() - i); // outer product
 
       if (lambda != 0){
-          Minv[i,i:] =  Minv[i,i:] - model.mCustomJoints[kI]->Dinv * model.mCustomJoints[kI]->U.transpose() * X_lambda * P_lambda[i,i:]
-      }
-      P_i[i,i:] =  model.mCustomJoints[kI]-> * Minv[i,i:]
-      if (lambda != 0){
-          P_i[i,i:] =  P_i[i,i:] + X_lambda * P_lambda[i,i:]
+          F.block(i, 0, i, 3, 6, model.mBodies.size() - i) =  F.block(i, 0, i, dofI, 6, model.mBodies.size() - i)
+                  + X_lambda * F.block(lambda, 0, i, dofI, 6, model.mBodies.size() - i);
       }
     }
   }
 
   LOG << "Minv = " << Minv << std::endl;
 }
+
 
 RBDL_DLLAPI void ForwardDynamicsLagrangian (
     Model &model,
