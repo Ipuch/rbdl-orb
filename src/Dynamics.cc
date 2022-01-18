@@ -603,14 +603,15 @@ RBDL_DLLAPI void AnalyticalInverseInertiaMatrix(
   // initialize a F matrix (model.mBodies.size() x 6 x model.mBodies.size())
   // with zeros
   const MatrixNd F; // TOMODIF
+  // const Eigen::MatrixXd
+
   F.setZero(); // all element to zero
   //
   // Backward Pass
   for (i = model.mBodies.size() - 1; i > 0; i--) {
     unsigned int q_index = model.mJoints[i].q_index;
-
     // TODO
-    std::vector<unsigned int> sub_index = TODO; // TODO
+    std::vector<unsigned int> sub_index = model.mu[i]; // TODO
     // TODO
 
     if (model.mJoints[i].mDoFCount == 1
@@ -664,6 +665,7 @@ RBDL_DLLAPI void AnalyticalInverseInertiaMatrix(
           * model.multdof3_U[i]).inverse().eval();
 #endif
       // from me
+
       Minv.block(i, i, 3, 3) = model.multdof3_Dinv[i];
       for (j = 0; j < sub_index.size(); j++) {
             Minv.block(i, sub_index[j], 3, 3) = Minv.block(i, sub_index[j], 3, 3)
